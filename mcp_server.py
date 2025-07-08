@@ -2,9 +2,11 @@
 
 import asyncio
 import logging
+import sys
 from typing import Any, Sequence
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
+from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import Resource, Tool, TextContent, ImageContent, EmbeddedResource
 from pydantic import AnyUrl
@@ -18,8 +20,25 @@ logger = logging.getLogger("hn-job-scraper")
 # Initialize the MCP server
 app = Server("hn-job-scraper")
 
-# Initialize scraper
-scraper = HackerNewsScraper()
+# Initialize scraper (lazy-loaded)
+print("Setting up scraper...", file=sys.stderr)
+scraper = None
+
+def get_scraper():
+    global scraper
+    if scraper is None:
+        print("Initializing scraper...", file=sys.stderr)
+        try:
+            import os
+            print(f"Current working directory: {os.getcwd()}", file=sys.stderr)
+            scraper = HackerNewsScraper(enable_cache=False)  # Disable caching for MCP
+            print(f"Scraper initialized successfully with cache dir: {scraper.cache_dir}", file=sys.stderr)
+        except Exception as e:
+            print(f"Error initializing scraper: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+            raise
+    return scraper
 
 @app.list_resources()
 async def list_resources() -> list[Resource]:
@@ -49,7 +68,7 @@ async def read_resource(uri: AnyUrl) -> str:
     
     if path == "jobs/latest":
         # Get latest job postings
-        jobs = scraper.scrape_job_postings()
+        jobs = get_scraper().scrape_job_postings()
         return json.dumps(jobs, indent=2)
     
     elif path == "jobs/search":
@@ -115,8 +134,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text="Please provide a search query")]
         
         # Get job postings and search
-        jobs = scraper.scrape_job_postings()
-        matching_jobs = scraper.search_jobs(query, jobs)
+        jobs = get_scraper().scrape_job_postings()
+        matching_jobs = get_scraper().search_jobs(query, jobs)
         
         if not matching_jobs:
             return [TextContent(
@@ -147,7 +166,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text="Please provide a job ID")]
         
         # Get job postings and find the specific job
-        jobs = scraper.scrape_job_postings()
+        jobs = get_scraper().scrape_job_postings()
         job = next((j for j in jobs if j["id"] == job_id), None)
         
         if not job:
@@ -162,15 +181,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )]
     
     elif name == "refresh_jobs":
-        # Clear cache by removing cache files
-        import os
-        import glob
-        cache_files = glob.glob(os.path.join(scraper.cache_dir, "*.json"))
-        for cache_file in cache_files:
-            os.remove(cache_file)
-        
-        # Fetch fresh data
-        jobs = scraper.scrape_job_postings()
+        # Since caching is disabled for MCP, just fetch fresh data
+        jobs = get_scraper().scrape_job_postings()
         
         return [TextContent(
             type="text",
@@ -182,19 +194,31 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 async def main():
     """Run the MCP server"""
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="hn-job-scraper",
-                server_version="1.0.0",
-                capabilities=app.get_capabilities(
-                    notification_options=None,
-                    experimental_capabilities=None,
+    print("Starting MCP server...", file=sys.stderr)
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            print("Server started, running app...", file=sys.stderr)
+            await app.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="hn-job-scraper",
+                    server_version="1.0.0",
+                    capabilities=app.get_capabilities(
+                        notification_options=NotificationOptions(
+                            prompts_changed=False,
+                            resources_changed=False,
+                            tools_changed=False
+                        ),
+                        experimental_capabilities={}
+                    ),
                 ),
-            ),
-        )
+            )
+    except Exception as e:
+        print(f"Error running MCP server: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())

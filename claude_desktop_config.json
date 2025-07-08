@@ -2,9 +2,11 @@
   "mcpServers": {
     "hn-job-scraper": {
       "command": "python3",
-      "args": ["/Users/buckleyrobinson/projects/bitchute/hackernews-jobscraper/mcp_server.py"],
+      "args": [
+        "/Users/buckleyrobinson/projects/hn_candidate_mcp/mcp_server.py"
+      ],
       "env": {
-        "PYTHONPATH": "/Users/buckleyrobinson/projects/bitchute/hackernews-jobscraper"
+        "PYTHONPATH": "/Users/buckleyrobinson/projects/hn_candidate_mcp"
       }
     }
   }

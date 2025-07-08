@@ -6,25 +6,44 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 class HackerNewsScraper:
-    def __init__(self, cache_dir: str = "cache"):
-        self.cache_dir = cache_dir
+    def __init__(self, cache_dir: str = None, enable_cache: bool = True):
         self.base_url = "https://news.ycombinator.com"
-        if not os.path.exists(cache_dir):
-            os.makedirs(cache_dir)
+        self.enable_cache = enable_cache
+        
+        if not enable_cache:
+            self.cache_dir = None
+        elif cache_dir is None:
+            import tempfile
+            self.cache_dir = tempfile.mkdtemp(prefix="hn_cache_")
+        else:
+            self.cache_dir = cache_dir
+            try:
+                if not os.path.exists(cache_dir):
+                    os.makedirs(cache_dir)
+            except OSError:
+                # Fallback to temp directory if cache dir can't be created
+                import tempfile
+                self.cache_dir = tempfile.mkdtemp(prefix="hn_cache_")
     
     def scrape_job_postings(self, hn_thread_id: str = "44434574") -> List[Dict[str, Any]]:
         """
         Scrape job postings from HackerNews 'Who's Hiring' thread
         """
-        cache_file = os.path.join(self.cache_dir, f"hn_jobs_{hn_thread_id}.json")
-        
-        # Check if cached data exists and is recent (less than 1 hour old)
-        if os.path.exists(cache_file):
-            file_age = datetime.now().timestamp() - os.path.getmtime(cache_file)
-            if file_age < 3600:  # 1 hour in seconds
-                print(f"Loading from cache: {cache_file}")
-                with open(cache_file, 'r') as f:
-                    return json.load(f)
+        # Check cache only if caching is enabled
+        if self.enable_cache and self.cache_dir:
+            cache_file = os.path.join(self.cache_dir, f"hn_jobs_{hn_thread_id}.json")
+            
+            # Check if cached data exists and is recent (less than 1 hour old)
+            try:
+                if os.path.exists(cache_file):
+                    file_age = datetime.now().timestamp() - os.path.getmtime(cache_file)
+                    if file_age < 3600:  # 1 hour in seconds
+                        print(f"Loading from cache: {cache_file}")
+                        with open(cache_file, 'r') as f:
+                            return json.load(f)
+            except OSError:
+                # Cache file not accessible, continue with fresh scrape
+                pass
         
         print(f"Scraping HackerNews thread: {hn_thread_id}")
         url = f"{self.base_url}/item?id={hn_thread_id}"
@@ -78,8 +97,14 @@ class HackerNewsScraper:
                     continue
             
             # Cache the results
-            with open(cache_file, 'w') as f:
-                json.dump(job_postings, f, indent=2)
+            if self.enable_cache and self.cache_dir:
+                try:
+                    cache_file = os.path.join(self.cache_dir, f"hn_jobs_{hn_thread_id}.json")
+                    with open(cache_file, 'w') as f:
+                        json.dump(job_postings, f, indent=2)
+                except OSError:
+                    # Silently continue if caching fails
+                    pass
             
             print(f"Scraped {len(job_postings)} job postings")
             return job_postings
@@ -102,7 +127,7 @@ class HackerNewsScraper:
         return matching_jobs
 
 if __name__ == "__main__":
-    scraper = HackerNewsScraper()
+    scraper = HackerNewsScraper(cache_dir="cache")  # Use cache dir when run directly
     jobs = scraper.scrape_job_postings()
     print(f"Found {len(jobs)} job postings")
     
